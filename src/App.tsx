@@ -1,57 +1,74 @@
 import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import cloudflareLogo from './assets/Cloudflare_Logo.svg'
 import './App.css'
 
+type SearchResult = {
+  id: string
+  score: number
+  metadata: {
+    name: string
+    shortDescription: string
+    sku: string
+  }
+}
+
+
 function App() {
-  const [count, setCount] = useState(0)
-  const [name, setName] = useState('unknown')
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+
+  const handleSearch = async () => {
+    if (!query.trim()) return
+
+    setIsLoading(true)
+    try {
+      const response = await fetch('/api/search-product', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query }),
+      })
+      const data = await response.json()
+      setResults(data || [])
+    } catch (error) {
+      console.error('Search failed:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   return (
-    <>
-      <div>
-        <a href='https://vite.dev' target='_blank'>
-          <img src={viteLogo} className='logo' alt='Vite logo' />
-        </a>
-        <a href='https://react.dev' target='_blank'>
-          <img src={reactLogo} className='logo react' alt='React logo' />
-        </a>
-        <a href='https://workers.cloudflare.com/' target='_blank'>
-          <img src={cloudflareLogo} className='logo cloudflare' alt='Cloudflare logo' />
-        </a>
-      </div>
-      <h1>Vite + React + Cloudflare</h1>
-      <div className='card'>
-        <button
-          onClick={() => setCount((count) => count + 1)}
-          aria-label='increment'
-        >
-          count is {count}
+    <div className="container">
+      <div className="search-box">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search products..."
+          onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+        />
+        <button onClick={handleSearch} disabled={isLoading}>
+          {isLoading ? 'Searching...' : 'Search'}
         </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
       </div>
-      <div className='card'>
-        <button
-          onClick={() => {
-            fetch('/api/')
-              .then((res) => res.json() as Promise<{ name: string }>)
-              .then((data) => setName(data.name))
-          }}
-          aria-label='get name'
-        >
-          Name from API is: {name}
-        </button>
-        <p>
-          Edit <code>api/index.ts</code> to change the name
-        </p>
+
+      <div className="results">
+        {results.map((result) => (
+          <div key={result.id} className="result-card">
+            <h3>{result.metadata.name}</h3>
+            <p>{result.metadata.shortDescription}</p>
+            <div className="result-footer">
+              <span>SKU: {result.metadata.sku}</span>
+              <br />
+              <span>Short description: {result.metadata.shortDescription}</span>
+              <br />
+              <span>Score: {(result.score * 100).toFixed(2)}%</span>
+            </div>
+          </div>
+        ))}
       </div>
-      <p className='read-the-docs'>
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    </div>
   )
 }
 
