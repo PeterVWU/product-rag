@@ -80,6 +80,7 @@ async function createVectorDatabase(request: Request, env: Env) {
     console.log('googleDriveUrl')
     try {
         const products = await getProducts(googleDriveUrl)
+        console.log('products length', products.length)
         await embedProducts(products, env)
     } catch (error) {
         console.error('Error embedding products:', error)
@@ -97,7 +98,7 @@ async function getProducts(googleDriveUrl: string): Promise<ProductType[]> {
         .slice(1) // Skip header row
         .filter((line) => {
             const [sku] = line
-            return line.trim() !== '' && sku !== ''
+            return line.trim() !== '' && sku !== undefined && sku !== ""
         })
         .map((line) => {
             const [name, shortDescription, sku] = line
@@ -122,34 +123,29 @@ async function getProducts(googleDriveUrl: string): Promise<ProductType[]> {
 function stripHtmlTags(str: string): string {
     return str
         ? str
-              .replace(/<[^>]*>/g, '')
-              .replace(/&[^;]+;/g, ' ')
-              .replace(/^["']|["']$/g, '')
-              .trim()
+            .replace(/<[^>]*>/g, '')
+            .replace(/&[^;]+;/g, ' ')
+            .replace(/^["']|["']$/g, '')
+            .trim()
         : ''
 }
 
 async function embedProducts(products: ProductType[], env: Env) {
-    const batchSize = 20
+    const batchSize = 100
+    const totalBatches = Math.ceil(products.length / batchSize)
     for (let i = 0; i < products.length; i += batchSize) {
         const batch = products.slice(i, i + batchSize)
-        await processProductBatch(batch, env)
+        console.log(`Processing batch ${Math.floor(i / batchSize) + 1} of ${totalBatches}`)
+        await processProductBatch(batch, i, env)
     }
     console.log(`Successfully embedded ${products.length} products`)
 }
 
-async function processProductBatch(products: ProductType[], env: Env) {
-    console.log('Processing product batch', products)
-    const embeddings: number[][] = []
-
-    // Process embeddings sequentially
-    for (const product of products) {
-        const embedding = await generateEmbedding(product, env)
-        embeddings.push(embedding)
-    }
+async function processProductBatch(products: ProductType[], batchNumber: number, env: Env) {
+    const embeddings: number[][] = await generateEmbedding(products, env)
 
     const vectors: VectorizeVector[] = products.map((product, index) => ({
-        id: product.sku.slice(0, 16),
+        id: product.sku ? product.sku.slice(0, 16) : `${batchNumber}-${index}`,
         values: embeddings[index],
         metadata: {
             name: product.name,
@@ -162,17 +158,25 @@ async function processProductBatch(products: ProductType[], env: Env) {
 }
 
 async function generateEmbedding(
-    product: ProductType,
+    productBatch: ProductType[],
     env: Env
-): Promise<number[]> {
-    const text = `Name: ${product.name}\nShort Description: ${product.shortDescription}\nSKU: ${product.sku}`
-    console.log('Generating embedding for:', text)
+): Promise<number[][]> {
+    const productTexts = productBatch.map((product) => {
+        return `Name: ${product.name}\nShort Description: ${product.shortDescription}\nSKU: ${product.sku}`
+    })
     try {
-        const response = await env.AI.run('@cf/baai/bge-base-en-v1.5', {
-            text: text,
-        })
+        const response = await env.AI.run('@cf/baai/bge-small-en-v1.5', {
+            text: productTexts,
+        },
+            {
+                gateway: {
+                    id: "generic_worker_ai",
+                    skipCache: false,
+                    cacheTtl: 3360,
+                },
+            },)
 
-        return response.data[0]
+        return response.data
     } catch (error) {
         console.error('Error generating embedding:', error)
         throw new Error('Failed to generate embedding')
@@ -185,7 +189,7 @@ async function searchProduct(request: Request, env: Env): Promise<object> {
         const embedding = await generateQueryEmbedding(query, env)
 
         const searchResults = await env.VECTORIZE.query(embedding, {
-            topK: 10,
+            topK: 5,
             returnValues: true,
             returnMetadata: 'all',
         })
@@ -219,9 +223,16 @@ async function generateQueryEmbedding(
     env: Env
 ): Promise<number[]> {
     try {
-        const response = await env.AI.run('@cf/baai/bge-base-en-v1.5', {
+        const response = await env.AI.run('@cf/baai/bge-small-en-v1.5', {
             text: query,
-        })
+        },
+            {
+                gateway: {
+                    id: "generic_worker_ai",
+                    skipCache: false,
+                    cacheTtl: 3360,
+                },
+            },)
 
         return response.data[0]
     } catch (error) {
